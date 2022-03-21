@@ -1,0 +1,80 @@
+variables:
+  SONAR_TOKEN: "${SONAR_TOKEN}"
+  SONAR_HOST_URL: "${SONAR_HOST_URL}"
+  GIT_DEPTH: 0
+
+stages: # stage order
+  - test
+  - coverage
+  - build
+  - deploy
+
+tests:
+  image: python:3.9-slim-bullseye # docker image selected for this task
+  stage: test # attach task to this stage
+  script: # commands launched in docker container
+    - apt-get update
+    - apt-get install -y python3-pip
+    - pip install -r requirements.txt
+    - pip install pytest
+    - python -m pytest app/tests.py
+  only:
+    - develop
+    - release
+
+sonarqube-check:
+  image: sonarsource/sonar-scanner-cli:latest # docker image selected for this task
+  stage: test # attach task to this stage
+  script: # commands launched in docker container
+    - sonar-scanner -Dsonar.qualitygate.wait=true
+  allow_failure: true
+  only: # only launch this task ine these specifics cases
+    - develop
+    - release
+
+coverage:
+  image: python:3.9-slim-bullseye # docker image selected for this task
+  stage: coverage # attach task to this stage
+  script: # commands launched in docker container
+    - pip install -r requirements.txt
+    - pip install coverage
+    - pip install pytest pytest-cov
+    - coverage run -m pytest app/tests.py
+  only:
+    - develop
+    - release
+
+docker-build:
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  image: docker:latest # docker image selected for this task
+  stage: build # attach task to this stage
+  services:
+    - docker:dind # docker in docker
+  before_script: # commands launched in docker container before bloc 'script'
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY # log in the registry
+  script: # commands launched in docker container
+    - docker build --pull -t $CI_REGISTRY_IMAGE . # build the image with the SHA as tag
+    - docker tag $CI_REGISTRY_IMAGE $CI_REGISTRY_IMAGE:latest # add the tag 'latest'
+#    - docker tag $CI_REGISTRY_IMAGE $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest # push the image an all tags
+  only: # only launch this task ine these specifics cases
+    - release
+
+deployment:
+  stage: deploy
+  before_script:
+    - apt-get update
+    - apt-get install gnupg -y
+    - apt-get install software-properties-common -y
+    - apt-get install curl -y
+    - curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+    - apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+    - apt-get update
+    - apt-get install terraform -y
+  script:
+    - terraform init -input=false
+    - terraform plan -out=tfplan -input=false
+    - terraform apply -input=false tfplan
+  only:
+    - main

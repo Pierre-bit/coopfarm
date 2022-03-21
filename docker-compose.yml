@@ -1,0 +1,11 @@
+version: "3"
+services:
+
+  mongo:
+    image: mongo
+    container_name: msrv_cat_mongodb
+    restart: unless-stopped
+    volumes:
+      - ${PWD}/database:/data/db 
+    ports:
+      - "27017:27017"
